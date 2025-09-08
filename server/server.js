@@ -50,6 +50,9 @@ app.use('/api/chat', require('./routes/chat'));
 // 인증 관련 라우트
 app.use('/api/auth', require('./routes/auth'));
 
+// 헬스체크 라우트
+app.get('/health', (_, res) => res.json({ ok: true }));
+
 // 에러 처리 미들웨어
 app.use((err, req, res, next) => {
   console.error(err.stack);
@@ -67,6 +70,12 @@ app.use((req, res) => {
     message: '요청하신 리소스를 찾을 수 없습니다.' 
   });
 });
+
+// 헬스체크 (Render 상태 확인용)
+app.get('/health', (_, res) => {
+  res.json({ ok: true });
+});
+
 
 // 서버 시작
 app.listen(PORT, '0.0.0.0', () => {
