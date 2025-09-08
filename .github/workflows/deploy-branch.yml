@@ -1,0 +1,163 @@
+name: Deploy Branch with Custom Domain
+
+on:
+  push:
+    branches-ignore:
+      - main
+      - development
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel
+
+      - name: Extract branch name
+        id: branch
+        run: echo "branch_name=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
+
+      - name: Check if domain exists
+        id: check_domain
+        run: |
+          DOMAIN="${{ steps.branch.outputs.branch_name }}.clevithon.com"
+          echo "domain=$DOMAIN" >> $GITHUB_OUTPUT
+          echo "domain_exists=false" >> $GITHUB_OUTPUT
+
+      - name: Deploy to Vercel
+        id: deploy
+        run: |
+          DEPLOYMENT_URL=$(vercel --token ${{ secrets.VERCEL_TOKEN }} --yes)
+          echo "deployment_url=$DEPLOYMENT_URL" >> $GITHUB_OUTPUT
+
+      - name: Create alias
+        if: success()  # Deploy 성공 시만 실행
+        run: |
+          vercel alias set ${{ steps.deploy.outputs.deployment_url }} ${{ steps.check_domain.outputs.domain }} --token ${{ secrets.VERCEL_TOKEN }} --scope ricky-cleviais-projects
+
+      - name: Update reg.json with deployed URL
+        if: success()
+        id: update_reg
+        run: |
+          if [ -f ".vercel/reg.json" ]; then
+            DEPLOYED_URL="https://${{ steps.check_domain.outputs.domain }}"
+            jq --arg url "$DEPLOYED_URL" '.contentUrl = $url' .vercel/reg.json > .vercel/reg_updated.json
+            REG_DATA=$(cat .vercel/reg_updated.json)
+            echo "reg_data<<EOF" >> $GITHUB_OUTPUT
+            echo "$REG_DATA" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "reg_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "reg_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send API notification
+        if: steps.update_reg.outputs.reg_exists == 'true'
+        run: |
+          curl -X POST https://ivyleague.9s.is/api/hackathon/posts \
+            -H "Content-Type: application/json" \
+            -d '${{ steps.update_reg.outputs.reg_data }}'
+
+      - name: Remove reg.json
+        if: steps.update_reg.outputs.reg_exists == 'true'
+        run: |
+          rm .vercel/reg.json
+          rm .vercel/reg_updated.json
+
+      - name: Commit reg.json removal
+        if: steps.update_reg.outputs.reg_exists == 'true'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add -A
+          git commit -m "Remove reg.json after deployment" || exit 0
+          git push
+
+      # 🚨 Deploy 실패 시 이메일 발송
+      - name: Send email on deploy failure
+        if: failure()
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          EMAIL_1: ${{ secrets.EMAIL_1 }}
+          EMAIL_2: ${{ secrets.EMAIL_2 }}
+          EMAIL_3: ${{ secrets.EMAIL_3 }}
+          EMAIL_4: ${{ secrets.EMAIL_4 }}
+        run: |
+          REG_FILE=".vercel/reg.json"
+        
+          if [ ! -f "$REG_FILE" ]; then
+            echo "No reg.json found, skipping email."
+            exit 0
+          fi
+        
+          TABLE_NO=$(jq -r '.tableNo' $REG_FILE)
+          USER_EMAIL=$(jq -r '.email // empty' $REG_FILE)
+        
+          if [ "$TABLE_NO" -ge 1 ] && [ "$TABLE_NO" -le 4 ]; then
+            RECEIVER="${EMAIL_1}"
+          elif [ "$TABLE_NO" -ge 5 ] && [ "$TABLE_NO" -le 8 ]; then
+            RECEIVER="${EMAIL_2}"
+          elif [ "$TABLE_NO" -ge 9 ] && [ "$TABLE_NO" -le 12 ]; then
+            RECEIVER="${EMAIL_3}"
+          else
+            RECEIVER="${EMAIL_4}"
+          fi
+        
+          COMMIT_MSG=$(git log -1 --pretty=format:'%s')
+          DEPLOY_TIME=$(TZ=Asia/Seoul date +"%Y-%m-%d %H:%M:%S %Z")
+        
+          python3 - <<END
+          import smtplib
+          from email.message import EmailMessage
+          import os
+        
+          smtp_host = os.environ['SMTP_HOST']
+          smtp_port = int(os.environ['SMTP_PORT'])
+          smtp_user = os.environ['SMTP_USER']
+          smtp_pass = os.environ['SMTP_PASS']
+        
+          receiver_main = "${RECEIVER}"
+          receiver_user = "${USER_EMAIL}"
+          table_no = "${TABLE_NO}"
+          commit_msg = "${COMMIT_MSG}"
+          deploy_time = "${DEPLOY_TIME}"
+        
+          subject = f"Vercel Deploy Failed for Table {table_no}"
+          body = f"""
+          안녕하세요, 테이블 {table_no} 담당자님.
+        
+          Table {table_no} 관련 GitHub 배포가 실패했습니다.
+          커밋 메시지: {commit_msg}
+          시간: {deploy_time}
+        
+          자세한 로그는 GitHub Actions 실행 페이지에서 확인해주세요.
+          """
+        
+          msg = EmailMessage()
+          msg['From'] = smtp_user
+          msg['To'] = receiver_main
+          if receiver_user:
+              msg['Cc'] = receiver_user
+          msg['Subject'] = subject
+          msg.set_content(body)
+          msg.set_charset('utf-8')
+        
+          with smtplib.SMTP(smtp_host, smtp_port) as server:
+              server.starttls()
+              server.login(smtp_user, smtp_pass)
+              server.send_message(msg)
+          END
