@@ -8,12 +8,17 @@ dotenv.config();
 
 // 앱 초기화
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 4000;
 
 // 미들웨어
 app.use(cors());
 app.use(express.json());
+app.use(cors({ origin: process.env.CLIENT_URL, credentials: true }));
 app.use(express.urlencoded({ extended: true }));
+
+// (선택) 헬스체크
+app.use(cors({ origin: process.env.CLIENT_URL, credentials: true }));
+
 
 // 데이터베이스 연결 (로컬 테스트를 위해 주석 처리)
 
@@ -64,7 +69,7 @@ app.use((req, res) => {
 });
 
 // 서버 시작
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`서버가 http://localhost:${PORT} 에서 실행 중입니다.`);
 });
 
