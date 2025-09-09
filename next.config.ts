@@ -5,12 +5,9 @@ const nextConfig: NextConfig = {
   compiler: {
     styledComponents: true,
   },
-  eslint: {
-    ignoreDuringBuilds: true,   // ✅ ESLint 에러 무시
-  },
-  typescript: {
-    ignoreBuildErrors: true,    // ✅ TS 타입 에러 무시
-  },
+  // ⬇️ 빌드 시 ESLint/TS 오류 때문에 멈추지 않도록
+  eslint: { ignoreDuringBuilds: true },
+  typescript: { ignoreBuildErrors: true },
 };
 
 export default nextConfig;
